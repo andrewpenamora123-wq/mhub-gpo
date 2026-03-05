@@ -593,9 +593,10 @@ makeButton(settingsPage, "Close Hub", 45, function()
     ScreenGui:Destroy()
 end)
 
-makeButton(settingsPage, "Rejoin Server", 88, function()
-    local ts = game:GetService("TeleportService")
-    ts:Teleport(game.PlaceId, lp)
+makeButton(settingsPage, "Stop All Scripts", 88, function()
+    autoFarmEnabled = false
+    autoScrollEnabled = false
+    notify("M HUB", "All scripts stopped.")
 end)
 
 makeLabel(settingsPage, "🛡️ Safe Mode is always ON", 135, 11, Color3.fromRGB(80, 255, 140))
