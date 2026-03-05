@@ -1,6 +1,5 @@
 -- =============================================
 --           M HUB — Grand Piece Online
---         Fishman Farm → World Scroll
 --              Executor: Volt
 --           [ SAFE MODE ENABLED ]
 -- =============================================
@@ -15,41 +14,43 @@ local hrp = char:WaitForChild("HumanoidRootPart")
 local hum = char:WaitForChild("Humanoid")
 
 -- =============================================
--- SAFE CONFIG
+-- CONFIG
 -- =============================================
 local TARGET_LEVEL  = 425
 local FARM_RADIUS   = 45
-
--- Slow human-like tween speed (was 120, now 35)
 local TWEEN_SPEED   = 35
-
--- Random attack delay range (seconds) — mimics real player reaction time
 local ATK_DELAY_MIN = 0.35
 local ATK_DELAY_MAX = 0.85
-
--- Random break every N attacks
 local PAUSE_EVERY   = math.random(12, 20)
 local PAUSE_MIN     = 2
 local PAUSE_MAX     = 6
 
-local FISHMAN_CF    = CFrame.new(-340, -2500, -14900)
-local MARINEFORD_CF = CFrame.new(100, 7, -11000)
-local SHRINE_CF     = CFrame.new(140, 12, -11200)
+local ISLANDS = {
+    ["Starter Island"]   = CFrame.new(3980, 7, 1270),
+    ["Shell's Town"]     = CFrame.new(-3700, 7, -400),
+    ["Gecko Island"]     = CFrame.new(-2400, 7, 2700),
+    ["Baratie"]          = CFrame.new(-5800, 7, 3000),
+    ["Arlong Park"]      = CFrame.new(-6700, 7, 700),
+    ["Skypiea"]          = CFrame.new(-300, 1507, -3000),
+    ["Alabasta"]         = CFrame.new(8900, 7, -1600),
+    ["Thriller Bark"]    = CFrame.new(-9800, 7, -2300),
+    ["Marineford"]       = CFrame.new(100, 7, -11000),
+    ["Fishman Island"]   = CFrame.new(-340, -2500, -14900),
+}
 
-local FISHMAN_MOBS  = {
+local SHRINE_CF = CFrame.new(140, 12, -11200)
+
+local FISHMAN_MOBS = {
     "fishman", "arlong", "merfolk", "sea warrior", "fisher tiger"
 }
 
 -- =============================================
 -- STATE
 -- =============================================
-local State = {
-    phase   = "idle",
-    status  = "Waiting...",
-    farming = false,
-}
-
-local attackCount = 0
+local autoFarmEnabled   = false
+local autoScrollEnabled = false
+local attackCount       = 0
+local farmConn          = nil
 
 -- =============================================
 -- UTILITY
@@ -57,7 +58,7 @@ local attackCount = 0
 local function notify(title, text)
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = title, Text = text, Duration = 5,
+            Title = title, Text = text, Duration = 4,
         })
     end)
 end
@@ -87,19 +88,14 @@ lp.CharacterAdded:Connect(function(c)
     char = c
     hrp  = c:WaitForChild("HumanoidRootPart")
     hum  = c:WaitForChild("Humanoid")
-    task.wait(4)
-    if State.farming and getLevel() < TARGET_LEVEL then
-        State.status = "⚔️ Respawned — resuming..."
-    end
 end)
 
 -- =============================================
--- SAFE TWEEN — splits trip into 3 segments
--- with small pauses between, looks like sailing
+-- TWEEN
 -- =============================================
 local function tweenTo(cf, label)
     if not hrp then return end
-    State.status = "✈️ Moving to " .. label .. "..."
+    notify("M HUB", "Moving to " .. label .. "...")
 
     local startPos = hrp.Position
     local endPos   = cf.Position
@@ -108,12 +104,10 @@ local function tweenTo(cf, label)
 
     for i = 1, segments do
         if not hrp then break end
-        local t     = i / segments
+        local t      = i / segments
         local midPos = startPos:Lerp(endPos, t)
         local midCF  = CFrame.new(midPos) * (cf - cf.Position)
-
-        local segDist = dist / segments
-        local segDur  = math.clamp(segDist / TWEEN_SPEED, 0.5, 30)
+        local segDur = math.clamp((dist / segments) / TWEEN_SPEED, 0.5, 30)
 
         local bp = Instance.new("BodyPosition")
         bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
@@ -128,14 +122,11 @@ local function tweenTo(cf, label)
         tween.Completed:Wait()
         bp:Destroy()
 
-        if i < segments then
-            randWait(0.3, 1.2) -- brief pause between segments
-        end
+        if i < segments then randWait(0.3, 1.0) end
     end
 
-    State.status = "📍 Arrived at " .. label
     notify("M HUB", "Arrived at " .. label .. "!")
-    randWait(1, 2.5)
+    randWait(1, 2)
 end
 
 -- =============================================
@@ -170,144 +161,74 @@ local function attackMob(mob)
     local mobHRP = mob:FindFirstChild("HumanoidRootPart")
     if not mobHRP then return end
 
-    -- Slight random offset so position isn't always identical
     local offsetX = (math.random() - 0.5) * 2
     local offsetZ = 3 + math.random() * 1.5
     hrp.CFrame = mobHRP.CFrame * CFrame.new(offsetX, 0, offsetZ)
 
-    -- Human-like reaction delay before swinging
     randWait(ATK_DELAY_MIN, ATK_DELAY_MAX)
-
-    local tool = char:FindFirstChildOfClass("Tool")
-    if tool then
-        for _, v in pairs(tool:GetDescendants()) do
-            if v:IsA("RemoteEvent") then
-                pcall(function() v:FireServer() end)
-            end
-        end
-    end
 
     local click = mob:FindFirstChildOfClass("ClickDetector")
     if click then pcall(function() fireclickdetector(click) end) end
 
-    -- Take random breaks to simulate a real player
     attackCount = attackCount + 1
     if attackCount >= PAUSE_EVERY then
         attackCount = 0
         PAUSE_EVERY = math.random(12, 22)
-        local pauseTime = math.random(PAUSE_MIN, PAUSE_MAX)
-        State.status = "💤 Short break (" .. pauseTime .. "s)..."
-        task.wait(pauseTime)
+        task.wait(math.random(PAUSE_MIN, PAUSE_MAX))
     end
 end
 
--- =============================================
--- WORLD SCROLL
--- =============================================
-local function getWorldScroll()
-    State.phase  = "toShrine"
-    State.status = "✈️ Heading to Marineford Shrine..."
-    notify("M HUB", "Lv.425 reached! Going to Marineford Shrine...")
+local function startFarm()
+    if farmConn then return end
+    autoFarmEnabled = true
+    task.spawn(function()
+        while autoFarmEnabled do
+            task.wait(0.15)
+            if not char or not hrp or not hum then continue end
+            if hum.Health <= 0 then task.wait(5) continue end
 
-    randWait(2, 4) -- pause before leaving like checking map
+            if autoScrollEnabled and getLevel() >= TARGET_LEVEL then
+                autoFarmEnabled = false
+                notify("M HUB", "Lv.425 reached! Going to Marineford Shrine...")
+                task.spawn(function()
+                    tweenTo(CFrame.new(100, 7, -11000), "Marineford")
+                    randWait(1, 2)
+                    tweenTo(SHRINE_CF, "Shrine NPC")
+                    task.wait(1)
+                    for _, v in pairs(workspace:GetDescendants()) do
+                        local n = v.Name:lower()
+                        if n:find("shrine") or n:find("altar") or n:find("oracle") then
+                            local click = v:FindFirstChildOfClass("ClickDetector")
+                                or (v:IsA("Model") and v:FindFirstChildWhichIsA("ClickDetector"))
+                            if click then
+                                randWait(0.5, 1.5)
+                                pcall(function() fireclickdetector(click) end)
+                            end
+                        end
+                    end
+                    notify("M HUB", "✅ Done! Check inventory for World Scroll.")
+                end)
+                break
+            end
 
-    tweenTo(MARINEFORD_CF, "Marineford")
-    randWait(1, 3)
-    tweenTo(SHRINE_CF, "Shrine NPC")
-    randWait(1, 2)
-
-    State.status = "🛕 Interacting with Shrine..."
-
-    local interacted = false
-    for _, v in pairs(workspace:GetDescendants()) do
-        local name = v.Name:lower()
-        if name:find("shrine") or name:find("scroll") or name:find("altar") or name:find("oracle") then
-            local click = v:FindFirstChildOfClass("ClickDetector")
-                or (v:IsA("Model") and v:FindFirstChildWhichIsA("ClickDetector"))
-            if click then
-                randWait(0.5, 1.5)
-                pcall(function() fireclickdetector(click) end)
-                interacted = true
-                randWait(0.8, 1.5)
+            local mob = getNearestMob()
+            if mob then
+                attackMob(mob)
+            else
+                local FISHMAN_CF = ISLANDS["Fishman Island"]
+                hrp.CFrame = FISHMAN_CF * CFrame.new(math.random(-30, 30), 0, math.random(-30, 30))
+                randWait(1.5, 3)
             end
         end
-    end
+    end)
+end
 
-    for _, remote in pairs(game:GetDescendants()) do
-        if remote:IsA("RemoteEvent") then
-            local name = remote.Name:lower()
-            if name:find("shrine") or name:find("scroll") or name:find("world") or name:find("altar") then
-                pcall(function() remote:FireServer() end)
-                interacted = true
-                randWait(0.4, 0.9)
-            end
-        end
-    end
-
-    randWait(1, 2)
-    State.phase  = "scrollDone"
-
-    if interacted then
-        State.status = "✅ World Scroll obtained!"
-        notify("M HUB", "✅ World Scroll obtained! All done.")
-    else
-        State.status = "⚠️ Shrine clicked — check inventory!"
-        notify("M HUB", "⚠️ Clicked Shrine — check your inventory.")
-    end
+local function stopFarm()
+    autoFarmEnabled = false
 end
 
 -- =============================================
--- MAIN SEQUENCE
--- =============================================
-task.spawn(function()
-    task.wait(3)
-
-    if getLevel() >= TARGET_LEVEL then
-        notify("M HUB", "Already Lv.425! Heading to Shrine...")
-        getWorldScroll()
-        return
-    end
-
-    State.phase = "tweening"
-    randWait(1, 2)
-    tweenTo(FISHMAN_CF, "Fishman Island")
-
-    State.phase   = "farming"
-    State.farming = true
-    State.status  = "⚔️ Farming Fishman mobs..."
-    notify("M HUB", "Farming Fishman Island → Target Lv." .. TARGET_LEVEL)
-
-    while State.farming do
-        task.wait(0.15)
-        if not char or not hrp or not hum then continue end
-        if hum.Health <= 0 then
-            task.wait(5)
-            continue
-        end
-
-        if getLevel() >= TARGET_LEVEL then
-            State.farming = false
-            break
-        end
-
-        local mob = getNearestMob()
-        if mob then
-            attackMob(mob)
-            State.status = "⚔️ Farming: " .. mob.Name
-        else
-            local rx = math.random(-30, 30)
-            local rz = math.random(-30, 30)
-            hrp.CFrame = FISHMAN_CF * CFrame.new(rx, 0, rz)
-            State.status = "🔍 Looking for mobs..."
-            randWait(1.5, 3)
-        end
-    end
-
-    getWorldScroll()
-end)
-
--- =============================================
--- GUI — M HUB
+-- GUI
 -- =============================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name           = "MHUB"
@@ -315,11 +236,12 @@ ScreenGui.ResetOnSpawn   = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent         = (gethui and gethui()) or lp.PlayerGui
 
+-- MAIN WINDOW
 local Main = Instance.new("Frame")
 Main.Name             = "Main"
-Main.Size             = UDim2.new(0, 280, 0, 165)
-Main.Position         = UDim2.new(0, 20, 0, 20)
-Main.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+Main.Size             = UDim2.new(0, 520, 0, 340)
+Main.Position         = UDim2.new(0.5, -260, 0.5, -170)
+Main.BackgroundColor3 = Color3.fromRGB(13, 13, 22)
 Main.BorderSizePixel  = 0
 Main.Active           = true
 Main.Draggable        = true
@@ -327,142 +249,376 @@ Main.ClipsDescendants = true
 Main.Parent           = ScreenGui
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
 
-local Shadow = Instance.new("Frame")
-Shadow.Size                   = UDim2.new(1, 8, 1, 8)
-Shadow.Position               = UDim2.new(0, -4, 0, -4)
-Shadow.BackgroundColor3       = Color3.fromRGB(0, 100, 200)
-Shadow.BackgroundTransparency = 0.85
-Shadow.BorderSizePixel        = 0
-Shadow.ZIndex                 = 0
-Shadow.Parent                 = Main
-Instance.new("UICorner", Shadow).CornerRadius = UDim.new(0, 14)
+-- TITLE BAR
+local TitleBar = Instance.new("Frame")
+TitleBar.Size             = UDim2.new(1, 0, 0, 38)
+TitleBar.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+TitleBar.BorderSizePixel  = 0
+TitleBar.Parent           = Main
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
 
-local TopBar = Instance.new("Frame")
-TopBar.Size             = UDim2.new(1, 0, 0, 44)
-TopBar.BackgroundColor3 = Color3.fromRGB(0, 120, 220)
-TopBar.BorderSizePixel  = 0
-TopBar.ZIndex           = 2
-TopBar.Parent           = Main
-Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 12)
+local TitleFix = Instance.new("Frame")
+TitleFix.Size             = UDim2.new(1, 0, 0, 12)
+TitleFix.Position         = UDim2.new(0, 0, 1, -12)
+TitleFix.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+TitleFix.BorderSizePixel  = 0
+TitleFix.Parent           = TitleBar
 
-local TopBarFix = Instance.new("Frame")
-TopBarFix.Size             = UDim2.new(1, 0, 0, 12)
-TopBarFix.Position         = UDim2.new(0, 0, 1, -12)
-TopBarFix.BackgroundColor3 = Color3.fromRGB(0, 120, 220)
-TopBarFix.BorderSizePixel  = 0
-TopBarFix.ZIndex           = 2
-TopBarFix.Parent           = TopBar
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Text               = "M HUB"
+TitleLabel.Size               = UDim2.new(1, -10, 1, 0)
+TitleLabel.Position           = UDim2.new(0, 10, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Font               = Enum.Font.GothamBold
+TitleLabel.TextSize           = 18
+TitleLabel.TextColor3         = Color3.new(1, 1, 1)
+TitleLabel.TextXAlignment     = Enum.TextXAlignment.Left
+TitleLabel.Parent             = TitleBar
 
-local HubName = Instance.new("TextLabel")
-HubName.Text               = "M HUB"
-HubName.Size               = UDim2.new(1, 0, 1, 0)
-HubName.BackgroundTransparency = 1
-HubName.Font               = Enum.Font.GothamBold
-HubName.TextSize           = 20
-HubName.TextColor3         = Color3.new(1, 1, 1)
-HubName.ZIndex             = 3
-HubName.Parent             = TopBar
+local SafeTag = Instance.new("TextLabel")
+SafeTag.Text               = "🛡️ SAFE MODE"
+SafeTag.Size               = UDim2.new(0, 100, 1, 0)
+SafeTag.Position           = UDim2.new(1, -110, 0, 0)
+SafeTag.BackgroundTransparency = 1
+SafeTag.Font               = Enum.Font.GothamBold
+SafeTag.TextSize           = 10
+SafeTag.TextColor3         = Color3.fromRGB(80, 255, 140)
+SafeTag.Parent             = TitleBar
 
-local SafeBadge = Instance.new("TextLabel")
-SafeBadge.Text               = "🛡️ SAFE MODE"
-SafeBadge.Size               = UDim2.new(0.9, 0, 0, 16)
-SafeBadge.Position           = UDim2.new(0.05, 0, 0, 46)
-SafeBadge.BackgroundTransparency = 1
-SafeBadge.Font               = Enum.Font.GothamBold
-SafeBadge.TextSize           = 10
-SafeBadge.TextColor3         = Color3.fromRGB(80, 255, 140)
-SafeBadge.TextXAlignment     = Enum.TextXAlignment.Left
-SafeBadge.Parent             = Main
+-- SIDEBAR
+local Sidebar = Instance.new("Frame")
+Sidebar.Size             = UDim2.new(0, 130, 1, -38)
+Sidebar.Position         = UDim2.new(0, 0, 0, 38)
+Sidebar.BackgroundColor3 = Color3.fromRGB(8, 8, 16)
+Sidebar.BorderSizePixel  = 0
+Sidebar.Parent           = Main
 
-local Divider = Instance.new("Frame")
-Divider.Size             = UDim2.new(0.9, 0, 0, 1)
-Divider.Position         = UDim2.new(0.05, 0, 0, 65)
-Divider.BackgroundColor3 = Color3.fromRGB(0, 120, 220)
-Divider.BackgroundTransparency = 0.5
-Divider.BorderSizePixel  = 0
-Divider.Parent           = Main
+-- CONTENT AREA
+local Content = Instance.new("Frame")
+Content.Size             = UDim2.new(1, -130, 1, -38)
+Content.Position         = UDim2.new(0, 130, 0, 38)
+Content.BackgroundColor3 = Color3.fromRGB(13, 13, 22)
+Content.BorderSizePixel  = 0
+Content.Parent           = Main
 
-local PhaseLabel = Instance.new("TextLabel")
-PhaseLabel.Size           = UDim2.new(0.9, 0, 0, 20)
-PhaseLabel.Position       = UDim2.new(0.05, 0, 0, 70)
-PhaseLabel.BackgroundTransparency = 1
-PhaseLabel.Font           = Enum.Font.GothamBold
-PhaseLabel.TextSize       = 12
-PhaseLabel.TextColor3     = Color3.fromRGB(0, 180, 255)
-PhaseLabel.TextXAlignment = Enum.TextXAlignment.Left
-PhaseLabel.Text           = "PHASE: Initializing"
-PhaseLabel.Parent         = Main
+-- Divider between sidebar and content
+local SideDiv = Instance.new("Frame")
+SideDiv.Size             = UDim2.new(0, 1, 1, -38)
+SideDiv.Position         = UDim2.new(0, 130, 0, 38)
+SideDiv.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+SideDiv.BackgroundTransparency = 0.6
+SideDiv.BorderSizePixel  = 0
+SideDiv.Parent           = Main
 
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size           = UDim2.new(0.9, 0, 0, 34)
-StatusLabel.Position       = UDim2.new(0.05, 0, 0, 90)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Font           = Enum.Font.Gotham
-StatusLabel.TextSize       = 12
-StatusLabel.TextColor3     = Color3.fromRGB(200, 225, 255)
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextWrapped    = true
-StatusLabel.Text           = "Starting up..."
-StatusLabel.Parent         = Main
+-- =============================================
+-- TAB SYSTEM
+-- =============================================
+local tabs = {}
+local tabPages = {}
+local activeTab = nil
+local activeIndicator = nil
 
-local LvlBarBG = Instance.new("Frame")
-LvlBarBG.Size             = UDim2.new(0.9, 0, 0, 12)
-LvlBarBG.Position         = UDim2.new(0.05, 0, 0, 132)
-LvlBarBG.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
-LvlBarBG.BorderSizePixel  = 0
-LvlBarBG.Parent           = Main
-Instance.new("UICorner", LvlBarBG).CornerRadius = UDim.new(0, 6)
+local function switchTab(name)
+    for n, page in pairs(tabPages) do
+        page.Visible = (n == name)
+    end
+    for n, btn in pairs(tabs) do
+        if n == name then
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+            btn.BackgroundTransparency = 0.6
+        else
+            btn.TextColor3 = Color3.fromRGB(160, 160, 180)
+            btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            btn.BackgroundTransparency = 1
+        end
+    end
+    activeTab = name
+end
 
-local LvlBarFill = Instance.new("Frame")
-LvlBarFill.Size             = UDim2.new(0, 0, 1, 0)
-LvlBarFill.BackgroundColor3 = Color3.fromRGB(0, 160, 255)
-LvlBarFill.BorderSizePixel  = 0
-LvlBarFill.Parent           = LvlBarBG
-Instance.new("UICorner", LvlBarFill).CornerRadius = UDim.new(0, 6)
+local tabNames = {"Main", "Farm", "Traveling", "Settings"}
+local tabY = 10
 
-local LvlText = Instance.new("TextLabel")
-LvlText.Size              = UDim2.new(0.9, 0, 0, 16)
-LvlText.Position          = UDim2.new(0.05, 0, 0, 146)
-LvlText.BackgroundTransparency = 1
-LvlText.Font              = Enum.Font.GothamSemibold
-LvlText.TextSize          = 11
-LvlText.TextColor3        = Color3.fromRGB(100, 200, 255)
-LvlText.TextXAlignment    = Enum.TextXAlignment.Left
-LvlText.Text              = "Level: ... / 425"
-LvlText.Parent            = Main
+for _, name in ipairs(tabNames) do
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(1, -8, 0, 34)
+    btn.Position         = UDim2.new(0, 4, 0, tabY)
+    btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    btn.BackgroundTransparency = 1
+    btn.BorderSizePixel  = 0
+    btn.Font             = Enum.Font.GothamSemibold
+    btn.TextSize         = 13
+    btn.TextColor3       = Color3.fromRGB(160, 160, 180)
+    btn.Text             = name
+    btn.TextXAlignment   = Enum.TextXAlignment.Left
+    btn.Parent           = Sidebar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
-local phaseColors = {
-    idle       = Color3.fromRGB(120, 120, 120),
-    tweening   = Color3.fromRGB(0, 180, 255),
-    farming    = Color3.fromRGB(255, 160, 0),
-    toShrine   = Color3.fromRGB(180, 80, 255),
-    scrollDone = Color3.fromRGB(50, 220, 100),
-}
+    -- Left accent bar
+    local accent = Instance.new("Frame")
+    accent.Size             = UDim2.new(0, 3, 0.6, 0)
+    accent.Position         = UDim2.new(0, 0, 0.2, 0)
+    accent.BackgroundColor3 = Color3.fromRGB(0, 140, 255)
+    accent.BorderSizePixel  = 0
+    accent.Visible          = false
+    accent.Parent           = btn
+    Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 2)
 
-local phaseNames = {
-    idle       = "IDLE",
-    tweening   = "TWEENING",
-    farming    = "FARMING",
-    toShrine   = "TO SHRINE",
-    scrollDone = "COMPLETE",
-}
+    -- Page
+    local page = Instance.new("Frame")
+    page.Size             = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel  = 0
+    page.Visible          = false
+    page.Parent           = Content
 
-RunService.Heartbeat:Connect(function()
-    local lvl   = getLevel()
-    local pct   = math.clamp(lvl / TARGET_LEVEL, 0, 1)
-    local phase = State.phase
-    local color = phaseColors[phase] or Color3.fromRGB(0, 120, 220)
-    local pname = phaseNames[phase] or phase:upper()
+    tabs[name]     = btn
+    tabPages[name] = page
 
-    LvlBarFill.Size             = UDim2.new(pct, 0, 1, 0)
-    LvlBarFill.BackgroundColor3 = color
-    LvlText.Text                = "Level: " .. lvl .. " / " .. TARGET_LEVEL .. "  (" .. math.floor(pct * 100) .. "%)"
-    PhaseLabel.Text             = "PHASE: " .. pname
-    PhaseLabel.TextColor3       = color
-    StatusLabel.Text            = State.status
-    TopBar.BackgroundColor3     = color
-    TopBarFix.BackgroundColor3  = color
+    btn.MouseButton1Click:Connect(function()
+        switchTab(name)
+        for n, b in pairs(tabs) do
+            local acc = b:FindFirstChildOfClass("Frame")
+            if acc then acc.Visible = (n == name) end
+        end
+    end)
+
+    tabY = tabY + 38
+end
+
+-- =============================================
+-- HELPERS FOR PAGE CONTENT
+-- =============================================
+local function makeLabel(parent, text, y, size, color)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size               = UDim2.new(1, -20, 0, size or 20)
+    lbl.Position           = UDim2.new(0, 10, 0, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Font               = Enum.Font.GothamBold
+    lbl.TextSize           = size or 13
+    lbl.TextColor3         = color or Color3.fromRGB(0, 160, 255)
+    lbl.TextXAlignment     = Enum.TextXAlignment.Left
+    lbl.Text               = text
+    lbl.Parent             = parent
+    return lbl
+end
+
+local function makeToggle(parent, label, y, onEnable, onDisable)
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(1, -20, 0, 34)
+    btn.Position         = UDim2.new(0, 10, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+    btn.BorderSizePixel  = 0
+    btn.Font             = Enum.Font.GothamSemibold
+    btn.TextSize         = 13
+    btn.TextColor3       = Color3.fromRGB(180, 180, 200)
+    btn.Text             = "[ OFF ]  " .. label
+    btn.TextXAlignment   = Enum.TextXAlignment.Left
+    btn.Parent           = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+
+    -- indent text
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10)
+    pad.Parent = btn
+
+    local state = false
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        if state then
+            btn.Text             = "[ ON ]   " .. label
+            btn.BackgroundColor3 = Color3.fromRGB(0, 130, 70)
+            btn.TextColor3       = Color3.fromRGB(255, 255, 255)
+            if onEnable then onEnable() end
+        else
+            btn.Text             = "[ OFF ]  " .. label
+            btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+            btn.TextColor3       = Color3.fromRGB(180, 180, 200)
+            if onDisable then onDisable() end
+        end
+    end)
+    return btn
+end
+
+local function makeButton(parent, label, y, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(1, -20, 0, 34)
+    btn.Position         = UDim2.new(0, 10, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+    btn.BorderSizePixel  = 0
+    btn.Font             = Enum.Font.GothamSemibold
+    btn.TextSize         = 13
+    btn.TextColor3       = Color3.new(1, 1, 1)
+    btn.Text             = label
+    btn.Parent           = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    btn.MouseButton1Click:Connect(function()
+        if callback then callback() end
+    end)
+    return btn
+end
+
+-- =============================================
+-- MAIN TAB
+-- =============================================
+local mainPage = tabPages["Main"]
+
+makeLabel(mainPage, "Welcome to M HUB", 15, 15, Color3.fromRGB(255, 255, 255))
+makeLabel(mainPage, "Grand Piece Online — Safe Mode", 36, 11, Color3.fromRGB(80, 255, 140))
+
+local lvlDisplay = makeLabel(mainPage, "Level: loading...", 65, 13, Color3.fromRGB(0, 180, 255))
+local statusDisplay = makeLabel(mainPage, "Status: Idle", 85, 12, Color3.fromRGB(160, 160, 180))
+
+makeLabel(mainPage, "────────────────────────", 108, 11, Color3.fromRGB(40, 40, 60))
+makeLabel(mainPage, "• Go to Farm tab to start auto farming", 122, 11, Color3.fromRGB(140, 140, 160))
+makeLabel(mainPage, "• Go to Traveling tab to tween to islands", 138, 11, Color3.fromRGB(140, 140, 160))
+makeLabel(mainPage, "• All actions use Safe Mode delays", 154, 11, Color3.fromRGB(140, 140, 160))
+
+-- =============================================
+-- FARM TAB
+-- =============================================
+local farmPage = tabPages["Farm"]
+
+makeLabel(farmPage, "Auto Farm", 12, 14, Color3.fromRGB(0, 180, 255))
+makeLabel(farmPage, "Farms Fishman Island mobs", 30, 11, Color3.fromRGB(120, 120, 140))
+
+makeToggle(farmPage, "Auto Farm Fishman", 52, function()
+    task.spawn(function()
+        tweenTo(ISLANDS["Fishman Island"], "Fishman Island")
+        startFarm()
+    end)
+    statusDisplay.Text = "Status: ⚔️ Farming Fishman..."
+end, function()
+    stopFarm()
+    statusDisplay.Text = "Status: Idle"
 end)
 
-notify("M HUB", "🛡️ Safe Mode ON — Starting Fishman Farm...")
-print("[M HUB] Loaded in Safe Mode.")
+makeLabel(farmPage, "Auto World Scroll", 100, 14, Color3.fromRGB(0, 180, 255))
+makeLabel(farmPage, "Goes to shrine after reaching Lv.425", 118, 11, Color3.fromRGB(120, 120, 140))
+
+makeToggle(farmPage, "Auto Get World Scroll", 140, function()
+    autoScrollEnabled = true
+end, function()
+    autoScrollEnabled = false
+end)
+
+makeButton(farmPage, "Go to Shrine Now", 188, function()
+    task.spawn(function()
+        tweenTo(CFrame.new(100, 7, -11000), "Marineford")
+        randWait(1, 2)
+        tweenTo(SHRINE_CF, "Shrine NPC")
+        task.wait(1)
+        for _, v in pairs(workspace:GetDescendants()) do
+            local n = v.Name:lower()
+            if n:find("shrine") or n:find("altar") then
+                local click = v:FindFirstChildOfClass("ClickDetector")
+                    or (v:IsA("Model") and v:FindFirstChildWhichIsA("ClickDetector"))
+                if click then
+                    randWait(0.5, 1.2)
+                    pcall(function() fireclickdetector(click) end)
+                end
+            end
+        end
+        notify("M HUB", "✅ Shrine interacted! Check inventory.")
+    end)
+end)
+
+-- =============================================
+-- TRAVELING TAB
+-- =============================================
+local travelPage = tabPages["Traveling"]
+
+makeLabel(travelPage, "Tween to Island", 12, 14, Color3.fromRGB(0, 180, 255))
+makeLabel(travelPage, "Click an island to travel there", 30, 11, Color3.fromRGB(120, 120, 140))
+
+local islandList = {
+    "Starter Island", "Shell's Town", "Gecko Island",
+    "Baratie", "Arlong Park", "Skypiea",
+    "Alabasta", "Thriller Bark", "Marineford", "Fishman Island"
+}
+
+-- Scrolling frame for islands
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size             = UDim2.new(1, -10, 1, -55)
+scroll.Position         = UDim2.new(0, 5, 0, 50)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel  = 0
+scroll.ScrollBarThickness = 3
+scroll.ScrollBarImageColor3 = Color3.fromRGB(0, 110, 210)
+scroll.CanvasSize       = UDim2.new(0, 0, 0, #islandList * 40 + 10)
+scroll.Parent           = travelPage
+
+local sy = 5
+for _, islandName in ipairs(islandList) do
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(1, -10, 0, 32)
+    btn.Position         = UDim2.new(0, 5, 0, sy)
+    btn.BackgroundColor3 = Color3.fromRGB(18, 18, 32)
+    btn.BorderSizePixel  = 0
+    btn.Font             = Enum.Font.Gotham
+    btn.TextSize         = 12
+    btn.TextColor3       = Color3.fromRGB(180, 210, 255)
+    btn.Text             = "➤  " .. islandName
+    btn.TextXAlignment   = Enum.TextXAlignment.Left
+    btn.Parent           = scroll
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10)
+    pad.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        local cf = ISLANDS[islandName]
+        if cf then
+            btn.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+            task.spawn(function()
+                tweenTo(cf, islandName)
+                task.wait(1)
+                btn.BackgroundColor3 = Color3.fromRGB(18, 18, 32)
+            end)
+        end
+    end)
+
+    sy = sy + 38
+end
+
+-- =============================================
+-- SETTINGS TAB
+-- =============================================
+local settingsPage = tabPages["Settings"]
+
+makeLabel(settingsPage, "Settings", 12, 14, Color3.fromRGB(0, 180, 255))
+
+makeButton(settingsPage, "Close Hub", 45, function()
+    ScreenGui:Destroy()
+end)
+
+makeButton(settingsPage, "Rejoin Server", 88, function()
+    local ts = game:GetService("TeleportService")
+    ts:Teleport(game.PlaceId, lp)
+end)
+
+makeLabel(settingsPage, "🛡️ Safe Mode is always ON", 135, 11, Color3.fromRGB(80, 255, 140))
+makeLabel(settingsPage, "Tween Speed: 35 studs/sec", 152, 11, Color3.fromRGB(120, 120, 140))
+makeLabel(settingsPage, "Attack Delay: 0.35–0.85s random", 168, 11, Color3.fromRGB(120, 120, 140))
+makeLabel(settingsPage, "Random breaks every 12–22 attacks", 184, 11, Color3.fromRGB(120, 120, 140))
+
+-- =============================================
+-- LIVE STATUS UPDATE
+-- =============================================
+RunService.Heartbeat:Connect(function()
+    local lvl = getLevel()
+    lvlDisplay.Text    = "Level: " .. lvl .. " / " .. TARGET_LEVEL .. "  (" .. math.floor(math.clamp(lvl/TARGET_LEVEL,0,1)*100) .. "%)"
+    if autoFarmEnabled then
+        statusDisplay.Text = "Status: ⚔️ Farming..."
+    elseif not autoFarmEnabled then
+        -- keep whatever was last set
+    end
+end)
+
+-- Start on Main tab
+switchTab("Main")
+tabs["Main"]:FindFirstChildOfClass("Frame").Visible = true
+
+notify("M HUB", "Loaded! Use the sidebar to navigate.")
+print("[M HUB] Loaded successfully.")
